@@ -1,0 +1,25 @@
+# BOUNDARY 1, the deployment half. dims is pinned to 512, so this model accepts
+# 512-token inputs and nothing else. Ship a 1024-token variant and every caller
+# still sending the old shape fails during the rollout window.
+#
+# Fix: declare the varying dimension as dynamic, dims: [ 1, -1 ], and every version
+# takes an identical request.
+name: "research"
+backend: "vllm"
+max_batch_size: 0
+
+input [
+  {
+    name: "text_input"
+    data_type: TYPE_STRING
+    dims: [ 1, 512 ]
+  }
+]
+
+output [
+  {
+    name: "text_output"
+    data_type: TYPE_STRING
+    dims: [ 1, 512 ]
+  }
+]

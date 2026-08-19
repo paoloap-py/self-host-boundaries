@@ -1,0 +1,17 @@
+# BOUNDARY 3. This scrapes Triton's own endpoint, which carries 9 of vLLM's metrics
+# and neither of the two that warn you. The fix is a merge proxy that reads vLLM's
+# PROMETHEUS_MULTIPROC_DIR with prometheus_client's MultiProcessCollector and serves
+# both metric sets on one surface.
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: triton
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["triton:8002"]
+
+  # the job that would fix it, deliberately commented out
+  # - job_name: vllm-under-triton
+  #   metrics_path: /metrics
+  #   static_configs:
+  #     - targets: ["metrics-proxy:9090"]
