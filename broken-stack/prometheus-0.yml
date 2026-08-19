@@ -1,0 +1,12 @@
+# BOUNDARY 3 healthy. Scrapes the merge proxy as well as Triton, so both metric
+# sets land on one surface and the two alerting metrics reach your dashboard.
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: triton
+    metrics_path: /metrics
+    static_configs: [{ targets: ["triton:8002"] }]
+
+  - job_name: vllm-under-triton
+    metrics_path: /metrics
+    static_configs: [{ targets: ["metrics-proxy:9091"] }]

@@ -1,34 +1,55 @@
-# Every version here is chosen to break one boundary. See FIXES.md.
+# Every flag defaults to 1, so `docker compose up` breaks all four boundaries at once.
+# Set one to 0 in .env to make that boundary healthy and isolate the others.
 services:
-  # BOUNDARY 2 is broken here: Triton 25.09 imports vllm.engine.metrics at backend
-  # load, and 0.11.1 deleted that module. The container starts and the backend never
-  # loads. Change to 0.11.0 to fix.
+  # BOUNDARY 2. 0.11.1 deleted vllm.engine.metrics, which Triton 25.09 imports at
+  # backend load, so nothing serves. BREAK_VERSION_PIN=0 pins the last release that
+  # still carries it.
   triton:
     image: nvcr.io/nvidia/tritonserver:25.09-vllm-python-py3
     command: >
-      bash -c "pip install vllm==0.11.1 &&
-               tritonserver --model-repository=/models --metrics-port=8002"
-    volumes: ["./model_repository:/models"]
+      bash -c 'if [ "$$BREAK_VERSION_PIN" = 1 ]; then V=0.11.1; else V=0.11.0; fi &&
+               pip install "vllm==$$V" &&
+               python -c "import vllm.engine.metrics" &&
+               tritonserver --model-repository=/models --metrics-port=8002'
+    volumes:
+      - ./model_repository:/models
+      - vllm-metrics:/tmp/vllm-metrics
     ports: ["8001:8001", "8002:8002"]
     environment:
       PROMETHEUS_MULTIPROC_DIR: /tmp/vllm-metrics
+      BREAK_VERSION_PIN: ${BREAK_VERSION_PIN:-1}
     deploy:
       resources:
         reservations:
           devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }]
 
-  # BOUNDARY 1 is broken here: this router accepts response_format and drops it.
+  # BOUNDARY 1. BREAK_ROUTER=1 accepts response_format and drops it before the engine
+  # sees it. BREAK_ROUTER=0 forwards it into vLLM's guided decoding settings.
   router:
     build: ./router
     ports: ["8000:8000"]
     environment:
       TRITON_URL: http://triton:8001
+      BREAK_ROUTER: ${BREAK_ROUTER:-1}
     depends_on: [triton]
 
-  # BOUNDARY 3 is broken here: this scrapes Triton, which forwards 9 of vLLM's
-  # 40-plus metrics and drops the two that would warn you. The merge proxy that
-  # would carry them is not wired in.
+  # BOUNDARY 3. BREAK_METRICS=1 scrapes Triton alone, which forwards 9 of vLLM's
+  # 40-plus metrics and neither of the two that warn you. BREAK_METRICS=0 also
+  # scrapes the merge proxy, which carries both.
   prometheus:
     image: prom/prometheus:latest
-    volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./prometheus-${BREAK_METRICS:-1}.yml:/etc/prometheus/prometheus.yml
     ports: ["9090:9090"]
+
+  # the proxy boundary 3 needs. It reads vLLM's PROMETHEUS_MULTIPROC_DIR with
+  # prometheus_client's MultiProcessCollector and serves both metric sets on one
+  # surface, which is the thirty lines you own from day one under Triton.
+  metrics-proxy:
+    build: ./metrics-proxy
+    ports: ["9091:9091"]
+    volumes: ["vllm-metrics:/tmp/vllm-metrics"]
+    depends_on: [triton]
+
+volumes:
+  vllm-metrics:
