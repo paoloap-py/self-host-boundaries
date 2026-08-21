@@ -79,8 +79,22 @@ python preflight.py --base-url http://localhost:8000/v1 --model research \
 
 **This has not been run yet, and this README will not print output it has not seen.**
 Boundaries 1 and 4 need a live endpoint and boundary 4 needs a GPU under enough pressure
-to force a real preemption. When that run happens, its four FAILs go here verbatim, with
-the vLLM version they came from.
+to force a real preemption.
+
+On a rented Linux box with one NVIDIA GPU, the Container Toolkit and an `nvcr.io` login,
+that run is one command:
+
+```bash
+./run-on-gpu.sh              # break all four
+./run-on-gpu.sh --healthy 3  # boundary 3 healthy, the other three broken
+```
+
+It refuses to start without a GPU docker can actually see, waits for the router (Triton
+pip-installs vLLM on boot, so a cold start is minutes), and writes `runs/<utc-stamp>/`
+with the preflight output, the raw metrics scrape, and the driver plus vLLM versions
+everything ran at. That directory is committed rather than ignored, because a repo with
+no evidence is the problem this one is trying to fix. Its four FAILs go here verbatim,
+citing the run they came from.
 
 ### A skipped check is not a pass
 
