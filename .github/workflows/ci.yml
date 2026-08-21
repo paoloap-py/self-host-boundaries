@@ -18,13 +18,22 @@ jobs:
       # without, the decoupling regressed.
       - name: boundary 3 against the committed fixtures, both directions
         run: python preflight.py --self-test
+      # `set +e` around each run: the default shell is `bash -e`, so a non-zero exit
+      # aborts the step before `rc=$?` is ever read. Asserting on a non-zero exit code
+      # is exactly what these two steps do, so -e has to come off for the call itself.
       - name: a run with no endpoint reports SKIP and exits 2, never 0
         run: |
-          python preflight.py --metrics "file://$PWD/fixtures/metrics-healthy.txt"; rc=$?
+          set +e
+          python preflight.py --metrics "file://$PWD/fixtures/metrics-healthy.txt"
+          rc=$?
+          set -e
           test $rc -eq 2 || { echo "expected exit 2 (checks skipped), got $rc"; exit 1; }
       - name: the broken-stack proxy fixture still fails
         run: |
-          python preflight.py --metrics "file://$PWD/fixtures/metrics-proxy-dropped.txt"; rc=$?
+          set +e
+          python preflight.py --metrics "file://$PWD/fixtures/metrics-proxy-dropped.txt"
+          rc=$?
+          set -e
           test $rc -eq 1 || { echo "expected exit 1 (boundary 3 fails), got $rc"; exit 1; }
       - name: preflight.py stays importable with no third-party packages
         run: python -c "import ast; ast.parse(open('preflight.py').read()); print('ok')"
