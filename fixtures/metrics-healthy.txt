@@ -1,0 +1,24 @@
+# Golden scrape: vLLM 0.11.0 behind the metrics proxy, everything Boundary 3 needs.
+# Captured so Boundary 3 is runnable and testable with no GPU and no cluster:
+#   python preflight.py --metrics file://$PWD/fixtures/metrics-healthy.txt --only 3
+# HELP vllm:num_requests_running Number of requests currently running on GPU.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running{model_name="research"} 3.0
+# HELP vllm:num_requests_waiting Number of requests waiting to be processed.
+# TYPE vllm:num_requests_waiting gauge
+vllm:num_requests_waiting{model_name="research"} 0.0
+# HELP vllm:kv_cache_usage_perc KV-cache usage. 1 means 100 percent usage.
+# TYPE vllm:kv_cache_usage_perc gauge
+vllm:kv_cache_usage_perc{model_name="research"} 0.4173
+# HELP vllm:prefix_cache_queries_total Prefix-cache queries, in tokens.
+# TYPE vllm:prefix_cache_queries_total counter
+vllm:prefix_cache_queries_total{model_name="research"} 918442.0
+# HELP vllm:prefix_cache_hits_total Prefix-cache hits, in tokens.
+# TYPE vllm:prefix_cache_hits_total counter
+vllm:prefix_cache_hits_total{model_name="research"} 617013.0
+# HELP vllm:num_preemptions_total Cumulative number of preemptions.
+# TYPE vllm:num_preemptions_total counter
+vllm:num_preemptions_total{model_name="research"} 41.0
+# HELP vllm:generation_tokens_total Number of generation tokens processed.
+# TYPE vllm:generation_tokens_total counter
+vllm:generation_tokens_total{model_name="research"} 2841177.0

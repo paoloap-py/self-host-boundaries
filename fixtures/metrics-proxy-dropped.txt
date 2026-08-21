@@ -1,0 +1,12 @@
+# What the broken-stack metrics proxy actually forwards: the gauges a dashboard
+# renders, and none of the prefix-cache counters. Nothing errors, the scrape
+# succeeds, and the number that tells you caching stopped working is not in it.
+# HELP vllm:num_requests_running Number of requests currently running on GPU.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running{model_name="research"} 3.0
+# HELP vllm:kv_cache_usage_perc KV-cache usage. 1 means 100 percent usage.
+# TYPE vllm:kv_cache_usage_perc gauge
+vllm:kv_cache_usage_perc{model_name="research"} 0.4173
+# HELP vllm:num_preemptions_total Cumulative number of preemptions.
+# TYPE vllm:num_preemptions_total counter
+vllm:num_preemptions_total{model_name="research"} 41.0
