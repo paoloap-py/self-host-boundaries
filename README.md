@@ -55,7 +55,9 @@ Boundaries 2 and 3 never touch a serving endpoint, and boundary 3 reads a `file:
 so the committed scrapes make it runnable on a laptop:
 
 ```bash
-python preflight.py --self-test
+git clone https://github.com/paoloap-py/self-host-boundaries
+cd self-host-boundaries
+python3 preflight.py --self-test
 ```
 
 Three fixtures under `fixtures/`, captured from a real vLLM exposition:
