@@ -49,7 +49,27 @@ list you are tracking arrives **shorter** than it was one step ago, and that shr
 only notice you get. Any state you keep outside the engine has to survive the engine
 restarting a request without telling you.
 
-## Break all four at once
+## Start with no GPU at all
+
+Boundaries 2 and 3 never touch a serving endpoint, and boundary 3 reads a `file://` URL,
+so the committed scrapes make it runnable on a laptop:
+
+```bash
+python preflight.py --self-test
+```
+
+Three fixtures under `fixtures/`, captured from a real vLLM exposition:
+
+| fixture | boundary 3 | why |
+|---|---|---|
+| `metrics-healthy.txt` | PASS | the golden scrape, every metric present |
+| `metrics-pre-092.txt` | FAIL | pre-0.9.2 vLLM, only the old `gpu_cache_usage_perc` exists |
+| `metrics-proxy-dropped.txt` | FAIL | the proxy forwards the gauges and drops the prefix-cache counters |
+
+Two of the three have to fail or the check is not checking anything, and an unreachable
+endpoint has to fail rather than pass. The self-test asserts all four.
+
+## Then break all four at once
 
 ```bash
 docker compose -f broken-stack/compose.yml up -d
@@ -57,7 +77,39 @@ python preflight.py --base-url http://localhost:8000/v1 --model research \
   --metrics http://localhost:9090/metrics --vllm-version 0.11.0
 ```
 
-Four FAILs, one per boundary, each naming what it found.
+**This has not been run yet, and this README will not print output it has not seen.**
+Boundaries 1 and 4 need a live endpoint and boundary 4 needs a GPU under enough pressure
+to force a real preemption.
+
+On a rented Linux box with one NVIDIA GPU, the Container Toolkit and an `nvcr.io` login,
+that run is one command:
+
+```bash
+./run-on-gpu.sh              # break all four
+./run-on-gpu.sh --healthy 3  # boundary 3 healthy, the other three broken
+```
+
+It refuses to start without a GPU docker can actually see, waits for the router (Triton
+pip-installs vLLM on boot, so a cold start is minutes), and writes `runs/<utc-stamp>/`
+with the preflight output, the raw metrics scrape, and the driver plus vLLM versions
+everything ran at. That directory is committed rather than ignored, because a repo with
+no evidence is the problem this one is trying to fix. Its four FAILs go here verbatim,
+citing the run they came from.
+
+### A skipped check is not a pass
+
+Each boundary declares what it needs and skips with a reason when that is missing, rather
+than taking the others down with it. Exit codes:
+
+| exit | meaning |
+|---|---|
+| 0 | every check ran and passed |
+| 1 | a check failed, named |
+| 2 | nothing failed, but something never ran |
+
+Exit 2 exists because the alternative is a preflight that goes green against a stack it
+never reached. Before 2026-08-21 an absent `openai` package raised at import and killed
+the run before any of the four executed, including the two that never import it.
 
 ## Or break exactly one
 

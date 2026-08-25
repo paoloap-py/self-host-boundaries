@@ -1,0 +1,12 @@
+# The same endpoint on a pre-0.9.2 vLLM. kv_cache_usage_perc does not exist yet;
+# the old gpu_cache_usage_perc does. An alert written against the new name is
+# silently dead here, which is the whole of Boundary 3.
+# HELP vllm:num_requests_running Number of requests currently running on GPU.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running{model_name="research"} 3.0
+# HELP vllm:gpu_cache_usage_perc GPU KV-cache usage. 1 means 100 percent usage.
+# TYPE vllm:gpu_cache_usage_perc gauge
+vllm:gpu_cache_usage_perc{model_name="research"} 0.4173
+# HELP vllm:num_preemptions_total Cumulative number of preemptions.
+# TYPE vllm:num_preemptions_total counter
+vllm:num_preemptions_total{model_name="research"} 41.0

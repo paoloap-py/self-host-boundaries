@@ -8,23 +8,54 @@ will import, and your laptop has a different one.
                         --metrics http://metrics-proxy:9090/metrics \\
                         --vllm-version 0.11.0 --modules vllm.engine.metrics
 
-Exit 0 = all four guarded. Exit 1 = the first failure, named.
+Exit 0 = every check that RAN passed. Exit 1 = a failure, named.
+Exit 2 = something was skipped, so the run proves less than it looks like it does.
+
+    python preflight.py --self-test        # no GPU, no cluster, no openai package
+    python preflight.py --only 3 --metrics file://$PWD/fixtures/metrics-healthy.txt
+
+Boundaries 2 and 3 need no serving endpoint, and 3 works against a file:// URL,
+so the committed fixtures make it runnable anywhere. Each check declares what it
+needs and SKIPS with a reason when that is missing, instead of taking the other
+three down with it. Before 2026-08-21 a missing `openai` package aborted the
+whole run at import time, including the two boundaries that never touch it.
 """
-import argparse, importlib, json, re, sys, urllib.request
+import argparse, importlib, json, os, re, sys, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-FAILS = []
+FAILS, SKIPS = [], []
+ONLY = None
+
+
+class Skip(Exception):
+    """Raised by a check that cannot run. Never counted as a pass."""
 
 
 def check(name):
     def wrap(fn):
+        if ONLY and name.split()[0] not in ONLY:
+            return
         try:
             fn()
             print(f"  PASS  {name}")
+        except Skip as e:
+            SKIPS.append(name)
+            print(f"  SKIP  {name}: {e}")
         except Exception as e:
             FAILS.append(name)
             print(f"  FAIL  {name}: {e}")
     return wrap
+
+
+def need_openai(base_url, api_key):
+    """Import lazily and only for the checks that talk to an endpoint."""
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise Skip("the openai package is not installed in this image")
+    if not base_url:
+        raise Skip("no --base-url given")
+    return OpenAI(base_url=base_url, api_key=api_key)
 
 
 def scrape(url, metric):
@@ -35,14 +66,13 @@ def scrape(url, metric):
 
 
 def run(a):
-    from openai import OpenAI
-    client = OpenAI(base_url=a.base_url, api_key=a.api_key)
     JSON_PROBE = "Name the capital of France."     # no reason to answer in JSON on its own
 
     # BOUNDARY 1. The field your schema accepts and the code behind it may drop.
     # JSON coming back for a prompt that never asked for it proves response_format survived.
     @check("1 response_format survives the router")
     def _():
+        client = need_openai(a.base_url, a.api_key)
         for _ in range(2):        # twice, so boundary 3 has a repeated prefix to hit on
             r = client.chat.completions.create(
                 model=a.model, messages=[{"role": "user", "content": JSON_PROBE}],
@@ -54,7 +84,12 @@ def run(a):
     #   grep -rhoE '^[[:space:]]*(from|import) vllm[.a-z_]*' src/ | awk '{print $2}' | sort -u
     @check("2 the backend's vllm imports resolve")
     def _():
-        import vllm
+        try:
+            import vllm
+        except ImportError:
+            raise Skip("vllm is not importable here; run this inside your serving image")
+        if not a.vllm_version:
+            raise Skip("no --vllm-version given, so there is nothing to compare against")
         print(f"        vllm {vllm.__version__} from {vllm.__file__}")
         if vllm.__version__ != a.vllm_version:
             raise RuntimeError(f"pinned {a.vllm_version}, importing {vllm.__version__}")
@@ -64,6 +99,8 @@ def run(a):
     # BOUNDARY 3. Nine metrics cross the bridge. These decide whether you get warned at all.
     @check("3 cache metrics reach your scrape target")
     def _():
+        if not a.metrics:
+            raise Skip("no --metrics given")
         usage = scrape(a.metrics, "vllm:kv_cache_usage_perc")
         if usage is None:
             legacy = scrape(a.metrics, "vllm:gpu_cache_usage_perc")
@@ -80,6 +117,9 @@ def run(a):
     # a flat counter proves nothing, so this fails loudly instead of quietly passing.
     @check("4 a forced preemption does not leak through your endpoint")
     def _():
+        client = need_openai(a.base_url, a.api_key)
+        if not a.metrics:
+            raise Skip("no --metrics given; boundary 4 is unprovable without the counter")
         before = scrape(a.metrics, "vllm:num_preemptions_total")
         if before is None:
             raise RuntimeError("num_preemptions_total missing: fix boundary 3 first")
@@ -111,17 +151,78 @@ def run(a):
         print(f"        {after - before:.0f} preemption(s) forced, stream stayed clean")
 
 
+SELF_TEST = [
+    # (fixture, expect) - expect is what boundary 3 must return on that scrape.
+    ("fixtures/metrics-healthy.txt",       "PASS",
+     "the golden scrape: every metric boundary 3 needs is present"),
+    ("fixtures/metrics-pre-092.txt",       "FAIL",
+     "pre-0.9.2 vLLM: the new cache-usage name does not exist yet"),
+    ("fixtures/metrics-proxy-dropped.txt", "FAIL",
+     "the proxy forwards the gauges and drops the prefix-cache counters"),
+]
+
+
+def self_test():
+    """Boundary 3 against committed fixtures. No GPU, no cluster, no openai package.
+    Two of the three MUST fail, or the check is not checking anything."""
+    global FAILS, SKIPS, ONLY
+    here = os.path.dirname(os.path.abspath(__file__))
+    ok = True
+    for rel, want, why in SELF_TEST:
+        path = os.path.join(here, rel)
+        if not os.path.exists(path):
+            print(f"  FAIL  fixture missing: {rel}")
+            ok = False
+            continue
+        FAILS, SKIPS, ONLY = [], [], {"3"}
+        print(f"\n--- {rel}  (expect {want})")
+        print(f"    {why}")
+        run(argparse.Namespace(
+            base_url=None, model=None, metrics="file://" + path, vllm_version=None,
+            modules="vllm.engine.metrics", api_key="none", pressure=2, max_tokens=16))
+        got = "FAIL" if FAILS else ("SKIP" if SKIPS else "PASS")
+        good = got == want
+        ok &= good
+        print(f"    --> {'ok' if good else 'WRONG'}: got {got}, wanted {want}")
+
+    # The guard has to guard: a scrape that finds nothing must never read as PASS.
+    FAILS, SKIPS, ONLY = [], [], {"3"}
+    print("\n--- an unreachable metrics endpoint  (expect FAIL, never PASS)")
+    run(argparse.Namespace(
+        base_url=None, model=None, metrics="file:///nonexistent-metrics-endpoint",
+        vllm_version=None, modules="", api_key="none", pressure=2, max_tokens=16))
+    good = bool(FAILS)
+    ok &= good
+    print(f"    --> {'ok' if good else 'WRONG'}: got {'FAIL' if FAILS else 'PASS/SKIP'}")
+
+    print("\nself-test PASS" if ok else "\nself-test FAIL")
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--base-url", required=True)
-    p.add_argument("--model", required=True)
-    p.add_argument("--metrics", required=True)
-    p.add_argument("--vllm-version", required=True)
+    p.add_argument("--base-url")
+    p.add_argument("--model")
+    p.add_argument("--metrics")
+    p.add_argument("--vllm-version")
     p.add_argument("--modules", default="vllm.engine.metrics")
     p.add_argument("--api-key", default="none")
     p.add_argument("--pressure", type=int, default=32, help="concurrent hogs for boundary 4")
     p.add_argument("--max-tokens", type=int, default=1024)
-    run(p.parse_args())
-    print(f"\n  {len(FAILS)} unguarded: {', '.join(FAILS)}" if FAILS
-          else "\n  four boundaries guarded")
-    sys.exit(1 if FAILS else 0)
+    p.add_argument("--only", help="comma-separated boundary numbers, e.g. --only 2,3")
+    p.add_argument("--self-test", action="store_true")
+    a = p.parse_args()
+    if a.self_test:
+        sys.exit(self_test())
+    ONLY = {n.strip() for n in a.only.split(",")} if a.only else None
+    run(a)
+    if FAILS:
+        print(f"\n  {len(FAILS)} unguarded: {', '.join(FAILS)}")
+    elif SKIPS:
+        print(f"\n  nothing failed, but {len(SKIPS)} check(s) never ran: {', '.join(SKIPS)}")
+        print("  This run does not mean the boundaries are guarded. It means they are untested.")
+    else:
+        print("\n  four boundaries guarded")
+    # 2, not 0: a skipped check is not a pass, and a CI job that treats it as one
+    # is how a preflight ends up green against a stack it never reached.
+    sys.exit(1 if FAILS else (2 if SKIPS else 0))
